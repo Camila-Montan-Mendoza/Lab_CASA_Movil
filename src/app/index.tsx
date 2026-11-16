@@ -11,7 +11,11 @@ import {
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Redirect, useFocusEffect, useRouter } from 'expo-router';
 import {
+  AlertCircle,
   Calendar,
+  CheckCircle2,
+  ChevronDown,
+  ChevronUp,
   ClipboardList,
   Clock,
   CloudDownload,
@@ -21,7 +25,6 @@ import {
   MapPin,
   Phone,
   Search,
-  User,
   Wifi,
   WifiOff,
 } from 'lucide-react-native';
@@ -34,22 +37,41 @@ import {
   descargarYGuardarAgendaOffline,
   sincronizarPuntosPendientes,
 } from '@/sync/sync-muestreos';
-import { ESTADOS_PUNTO } from '@/schemas/muestreos/muestreos.schema';
 import { Button } from '@/design-system/ui/button/button';
 import { Badge } from '@/design-system/ui/badge/badge';
 import { Card } from '@/design-system/ui/card/card';
 import { Input } from '@/design-system/ui/input/input';
 import {
-  EstadoProtocoloBadge,
-  EstadoPuntoBadge,
-} from '@/components/muestreos/EstadoPuntoBadge';
+  Tabs,
+  TabsList,
+  TabsTrigger,
+} from '@/design-system/ui/tabs/tabs';
 import { CasaColors, CasaRadius } from '@/design-system/tokens';
 
-const TODOS = 'todos';
+export interface ProgramacionAgrupada {
+  programacion_id: number;
+  nombre_entidad: string | null;
+  persona_contacto_prog: string;
+  celular_contacto_prog: string | null;
+  direccion_muestreo_prog: string;
+  tipo_analisis_prog: string;
+  nombre_recojo: string;
+  fecha_prog_punto: string;
+  hora_prog_punto: string;
+  hora_fin_prog_punto: string | null;
+  puntos: RegistroPuntoOffline[];
+  totalPuntos: number;
+  puntosCompletos: number;
+  puntosFinalizados: number;
+  tienePendientesSync: boolean;
+  esFinalizada: boolean;
+}
 
 /**
- * Agenda de Muestreos del Muestreador (`casa_fe/components/muestreos/MuestreoList/MuestreoList.tsx`
- * y `MuestreoDetail.tsx`), usando los componentes y tokens del Sistema de Diseño C.A.S.A.
+ * Agenda de Muestreo del Muestreador (C.A.S.A. Móvil).
+ * Agrupa los puntos por Programación en cards colapsables tipo acordeón,
+ * con solo dos pestañas (Asignados y Finalizados), y una barra de sincronización
+ * offline clara e intuitiva.
  */
 export default function MuestreosHomeScreen() {
   const router = useRouter();
@@ -57,20 +79,23 @@ export default function MuestreosHomeScreen() {
 
   const [filas, setFilas] = useState<RegistroPuntoOffline[]>([]);
   const [query, setQuery] = useState('');
-  const [estadoFiltro, setEstadoFiltro] = useState<string>(TODOS);
+  const [tabActiva, setTabActiva] = useState<'asignados' | 'finalizados'>('asignados');
   const [descargando, setDescargando] = useState(false);
   const [sincronizando, setSincronizando] = useState(false);
+  const [expandedIds, setExpandedIds] = useState<Record<number, boolean>>({});
 
   const puedeVerTodos = useMemo(
     () => user?.permisos?.includes('programacion.ver-todos') ?? false,
     [user?.permisos]
   );
 
+  const userSub = user?.sub;
+
   const cargarDesdeSqlite = useCallback(() => {
-    if (!user?.sub) return;
-    const lista = obtenerPuntosOffline(puedeVerTodos ? undefined : user.sub);
+    if (!userSub) return;
+    const lista = obtenerPuntosOffline(puedeVerTodos ? undefined : userSub);
     setFilas(lista);
-  }, [user?.sub, puedeVerTodos]);
+  }, [userSub, puedeVerTodos]);
 
   useFocusEffect(
     useCallback(() => {
@@ -90,7 +115,7 @@ export default function MuestreosHomeScreen() {
         if (!silencioso) {
           Alert.alert(
             'Modo Offline',
-            'No tienes conexión a internet. Mostrando los puntos guardados en el dispositivo.'
+            'No tienes conexión a internet. Mostrando las programaciones guardadas en el dispositivo.'
           );
         }
         return;
@@ -115,13 +140,13 @@ export default function MuestreosHomeScreen() {
             return;
           }
           if (!silencioso) {
-            Alert.alert('Error al descargar', res.message);
+            Alert.alert('Error al actualizar agenda', res.message);
           }
           return;
         }
         cargarDesdeSqlite();
         if (!silencioso) {
-          Alert.alert('Paquete Offline Actualizado', res.message);
+          Alert.alert('Agenda Actualizada', res.message);
         }
       } finally {
         setDescargando(false);
@@ -134,7 +159,10 @@ export default function MuestreosHomeScreen() {
     if (!user || !isOnline) return;
     const locales = obtenerPuntosOffline(puedeVerTodos ? undefined : user.sub);
     if (locales.length === 0) {
-      descargarDelServidor(true);
+      const timer = setTimeout(() => {
+        void descargarDelServidor(true);
+      }, 0);
+      return () => clearTimeout(timer);
     }
   }, [isOnline, user, puedeVerTodos, descargarDelServidor]);
 
@@ -142,7 +170,7 @@ export default function MuestreosHomeScreen() {
     if (!isOnline) {
       Alert.alert(
         'Sin conexión',
-        'Necesitas conexión a internet para enviar tus muestreos al servidor para revisión.'
+        'Necesitas conexión a internet para subir tus muestreos al servidor para revisión.'
       );
       return;
     }
@@ -185,29 +213,120 @@ export default function MuestreosHomeScreen() {
     }
   };
 
-  const filtrados = useMemo(() => {
-    return filas.filter((item) => {
-      const p = item.punto;
-      if (estadoFiltro !== TODOS && p.info_muestreo.estado_punto !== estadoFiltro) {
+  // Agrupación de filas en Programaciones
+  const programaciones = useMemo(() => {
+    const mapa = new Map<number, RegistroPuntoOffline[]>();
+    for (const f of filas) {
+      const pid = f.programacion_id || f.punto.info_muestreo.programacion_id;
+      const list = mapa.get(pid) ?? [];
+      list.push(f);
+      mapa.set(pid, list);
+    }
+
+    const resultado: ProgramacionAgrupada[] = [];
+
+    for (const [pid, puntos] of mapa.entries()) {
+      puntos.sort(
+        (a, b) => a.punto.info_protocolo.nro_punto - b.punto.info_protocolo.nro_punto
+      );
+      const primero = puntos[0].punto.info_muestreo;
+
+      const totalPuntos = puntos.length;
+      const puntosCompletos = puntos.filter((p) => p.punto.protocolo.completo).length;
+      const puntosFinalizados = puntos.filter((p) => {
+        const im = p.punto.info_muestreo;
+        return Boolean(im.protocolo_verificado) || im.estado_punto === 'entregado';
+      }).length;
+      const tienePendientesSync = puntos.some((p) => p.estado_sync !== 'sincronizado');
+      const esFinalizada = totalPuntos > 0 && puntosFinalizados === totalPuntos;
+
+      resultado.push({
+        programacion_id: pid,
+        nombre_entidad: primero.nombre_entidad || null,
+        persona_contacto_prog: primero.persona_contacto_prog,
+        celular_contacto_prog: primero.celular_contacto_prog || null,
+        direccion_muestreo_prog: primero.direccion_muestreo_prog,
+        tipo_analisis_prog: primero.tipo_analisis_prog,
+        nombre_recojo: primero.nombre_recojo,
+        fecha_prog_punto: primero.fecha_prog_punto,
+        hora_prog_punto: primero.hora_prog_punto,
+        hora_fin_prog_punto: primero.hora_fin_prog_punto || null,
+        puntos,
+        totalPuntos,
+        puntosCompletos,
+        puntosFinalizados,
+        tienePendientesSync,
+        esFinalizada,
+      });
+    }
+
+    // Ordenar de más reciente a más antigua
+    resultado.sort((a, b) => b.programacion_id - a.programacion_id);
+
+    return resultado;
+  }, [filas]);
+
+  const conteoAsignados = useMemo(
+    () => programaciones.filter((p) => !p.esFinalizada).length,
+    [programaciones]
+  );
+
+  const conteoFinalizados = useMemo(
+    () => programaciones.filter((p) => p.esFinalizada).length,
+    [programaciones]
+  );
+
+  const programacionesFiltradas = useMemo(() => {
+    return programaciones.filter((prog) => {
+      if (tabActiva === 'asignados' && prog.esFinalizada) {
         return false;
       }
+      if (tabActiva === 'finalizados' && !prog.esFinalizada) {
+        return false;
+      }
+
       const texto = query.trim().toLowerCase();
       if (!texto) return true;
+
       const buscable = [
-        p.info_protocolo.nombre_punto,
-        p.info_protocolo.nombre_protocolo,
-        p.info_protocolo.abreviatura_protocolo,
-        p.info_muestreo.persona_contacto_prog,
-        p.info_muestreo.direccion_muestreo_prog,
-        p.info_muestreo.tipo_analisis_prog,
-        p.info_muestreo.nombre_recojo,
-        `#${p.info_protocolo.nro_punto}`,
+        prog.nombre_entidad ?? '',
+        prog.persona_contacto_prog,
+        prog.direccion_muestreo_prog,
+        prog.tipo_analisis_prog,
+        prog.nombre_recojo,
+        `prog #${prog.programacion_id}`,
+        `#${prog.programacion_id}`,
+        ...prog.puntos.flatMap((p) => [
+          p.punto.info_protocolo.nombre_punto,
+          p.punto.info_protocolo.nombre_protocolo,
+          p.punto.info_protocolo.abreviatura_protocolo,
+          `punto ${p.punto.info_protocolo.nro_punto}`,
+        ]),
       ]
         .join(' ')
         .toLowerCase();
+
       return buscable.includes(texto);
     });
-  }, [filas, query, estadoFiltro]);
+  }, [programaciones, tabActiva, query]);
+
+  const isExpanded = useCallback(
+    (id: number, index: number, total: number) => {
+      if (expandedIds[id] !== undefined) {
+        return expandedIds[id];
+      }
+      // Por defecto expande si hay 2 o menos programaciones, o la primera de la lista
+      return index === 0 || total <= 2;
+    },
+    [expandedIds]
+  );
+
+  const toggleProg = useCallback((id: number, currentVal: boolean) => {
+    setExpandedIds((prev) => ({
+      ...prev,
+      [id]: !currentVal,
+    }));
+  }, []);
 
   if (!cargando && !user) {
     return <Redirect href="/login" />;
@@ -250,80 +369,102 @@ export default function MuestreosHomeScreen() {
         </View>
       </View>
 
-      {/* Barra de sincronización y descarga offline */}
-      <View style={styles.syncToolbar}>
-        <Button
-          variant="outline"
-          size="sm"
-          loading={descargando}
-          onPress={() => descargarDelServidor(false)}
-          style={styles.flexBtn}
-          tooltip="Descargar puntos asignados y catálogos para trabajar sin internet"
+      {/* Barra de sincronización y estado offline */}
+      <View style={styles.syncContainer}>
+        <View
+          style={[
+            styles.syncStatusBanner,
+            pendientesSync > 0
+              ? styles.syncStatusBannerPending
+              : styles.syncStatusBannerSynced,
+          ]}
         >
-          <CloudDownload size={16} color={CasaColors.primary} />
-          Descargar paquete
-        </Button>
+          {pendientesSync > 0 ? (
+            <>
+              <AlertCircle size={15} color="#b45309" />
+              <Text style={styles.syncStatusTextPending}>
+                Hay {pendientesSync} {pendientesSync === 1 ? 'punto listo' : 'puntos listos'} para enviar.
+              </Text>
+            </>
+          ) : (
+            <>
+              <CheckCircle2 size={15} color="#15803d" />
+              <Text style={styles.syncStatusTextSynced}>
+                Todo sincronizado · Listo para trabajar sin conexión
+              </Text>
+            </>
+          )}
+        </View>
 
-        <Button
-          variant={pendientesSync > 0 ? 'default' : 'secondary'}
-          size="sm"
-          disabled={pendientesSync === 0}
-          loading={sincronizando}
-          onPress={handleSincronizar}
-          style={styles.flexBtn}
-          tooltip="Subir protocolos, muestras y fotografías pendientes al servidor"
-        >
-          <CloudUpload
-            size={16}
-            color={
-              pendientesSync > 0
-                ? CasaColors.primaryForeground
-                : CasaColors.secondaryForeground
-            }
-          />
-          {pendientesSync > 0
-            ? `Sincronizar (${pendientesSync})`
-            : 'Todo sincronizado'}
-        </Button>
+        <View style={styles.syncActionRow}>
+          <Button
+            variant="outline"
+            size="sm"
+            loading={descargando}
+            onPress={() => descargarDelServidor(false)}
+            style={styles.flexBtn}
+            tooltip="Actualizar agenda con los muestreos asignados desde el servidor"
+          >
+            <CloudDownload size={16} color={CasaColors.primary} />
+            Actualizar agenda
+          </Button>
+
+          <Button
+            variant={pendientesSync > 0 ? 'default' : 'secondary'}
+            size="sm"
+            disabled={pendientesSync === 0}
+            loading={sincronizando}
+            onPress={handleSincronizar}
+            style={styles.flexBtn}
+            tooltip="Subir protocolos, muestras y fotografías al servidor para auditoría"
+          >
+            <CloudUpload
+              size={16}
+              color={
+                pendientesSync > 0
+                  ? CasaColors.primaryForeground
+                  : CasaColors.secondaryForeground
+              }
+            />
+            {pendientesSync > 0
+              ? `Subir cambios (${pendientesSync})`
+              : 'Subir cambios'}
+          </Button>
+        </View>
       </View>
 
-      {/* Buscador y filtros por estado (como en MuestreoList.tsx de casa_fe) */}
-      <View style={styles.filterSection}>
+      {/* Pestañas: Asignados y Finalizados */}
+      <View style={styles.tabsSection}>
+        <Tabs
+          value={tabActiva}
+          onValueChange={(val) => setTabActiva(val as 'asignados' | 'finalizados')}
+        >
+          <TabsList style={styles.tabsList}>
+            <TabsTrigger value="asignados" style={styles.tabTrigger}>
+              Asignados ({conteoAsignados})
+            </TabsTrigger>
+            <TabsTrigger value="finalizados" style={styles.tabTrigger}>
+              Finalizados ({conteoFinalizados})
+            </TabsTrigger>
+          </TabsList>
+        </Tabs>
+      </View>
+
+      {/* Buscador */}
+      <View style={styles.searchSection}>
         <Input
           size="sm"
           value={query}
           onChangeText={setQuery}
-          placeholder="Buscar por punto, contacto, dirección o protocolo…"
+          placeholder="Buscar por cliente, dirección o protocolo…"
           startIcon={<Search size={16} color={CasaColors.mutedForeground} />}
         />
-
-        <View style={styles.filterChipsRow}>
-          {[TODOS, ...ESTADOS_PUNTO].map((est) => {
-            const activo = estadoFiltro === est;
-            return (
-              <TouchableOpacity
-                key={est}
-                onPress={() => setEstadoFiltro(est)}
-                style={[styles.filterChip, activo && styles.filterChipActive]}
-              >
-                <Text
-                  style={[
-                    styles.filterChipText,
-                    activo && styles.filterChipTextActive,
-                  ]}
-                >
-                  {est === TODOS ? 'Todos' : est}
-                </Text>
-              </TouchableOpacity>
-            );
-          })}
-        </View>
       </View>
 
-      {/* Lista de Puntos de Muestreo */}
+      {/* Lista de Programaciones (Cards desplegables) */}
       <FlatList
-        data={filtrados}
-        keyExtractor={(item) => String(item.punto_id)}
+        data={programacionesFiltradas}
+        keyExtractor={(item) => String(item.programacion_id)}
         contentContainerStyle={styles.listContent}
         refreshControl={
           <RefreshControl
@@ -335,135 +476,218 @@ export default function MuestreosHomeScreen() {
         ListEmptyComponent={
           <View style={styles.emptyBox}>
             <ClipboardList size={38} color={CasaColors.mutedForeground} />
-            <Text style={styles.emptyTitle}>No hay puntos de muestreo</Text>
+            <Text style={styles.emptyTitle}>
+              {tabActiva === 'asignados'
+                ? 'No tienes muestreos asignados pendientes'
+                : 'No hay muestreos finalizados todavía'}
+            </Text>
             <Text style={styles.emptySub}>
-              Pulsa «Descargar paquete» cuando tengas internet para guardar tus puntos asignados en el teléfono.
+              {tabActiva === 'asignados'
+                ? 'Pulsa «Actualizar agenda» con conexión a internet para descargar las órdenes asignadas a tu usuario.'
+                : 'Cuando completes tus protocolos y sean auditados y aprobados, aparecerán en esta sección.'}
             </Text>
           </View>
         }
-        renderItem={({ item }) => {
-          const { punto, estado_sync } = item;
-          const im = punto.info_muestreo;
-          const ip = punto.info_protocolo;
-          const numFrascos = punto.muestras.length;
-          const pendiente = estado_sync !== 'sincronizado';
+        renderItem={({ item, index }) => {
+          const prog = item;
+          const expanded = isExpanded(
+            prog.programacion_id,
+            index,
+            programacionesFiltradas.length
+          );
 
           return (
-            <Card style={styles.puntoCard}>
-              <View style={styles.cardTopRow}>
-                <View style={styles.badgesLeft}>
-                  <Badge color="navy" size="md">
-                    {`#${ip.nro_punto}`}
-                  </Badge>
-                  <Badge color="cyan" size="md">
-                    {ip.abreviatura_protocolo}
-                  </Badge>
-                  <EstadoPuntoBadge estado={im.estado_punto} />
+            <Card style={styles.progCard}>
+              {/* Cabecera interactiva para expandir / colapsar */}
+              <TouchableOpacity
+                activeOpacity={0.75}
+                onPress={() => toggleProg(prog.programacion_id, expanded)}
+                style={styles.cardHeaderTouchable}
+              >
+                <View style={styles.headerTopRow}>
+                  <View style={styles.badgesLeft}>
+                    <Badge color="navy" size="md">
+                      {`Prog. #${prog.programacion_id}`}
+                    </Badge>
+                    {prog.tienePendientesSync && (
+                      <Badge color="yellow" size="md">
+                        Cambios locales
+                      </Badge>
+                    )}
+                  </View>
+
+                  <View style={styles.headerRightBadge}>
+                    {prog.esFinalizada ? (
+                      <Badge color="green" size="md">
+                        Completada
+                      </Badge>
+                    ) : (
+                      <Badge variant="secondary" size="md">
+                        {`${prog.puntosCompletos}/${prog.totalPuntos} listos`}
+                      </Badge>
+                    )}
+                  </View>
                 </View>
 
-                {pendiente ? (
-                  <Badge color="yellow" size="md">
-                    Pendiente sync
-                  </Badge>
-                ) : (
-                  <Badge color="green" size="md">
-                    Sincronizado
-                  </Badge>
-                )}
-              </View>
-
-              <View style={styles.titleBlock}>
-                <Text style={styles.puntoTitle}>{ip.nombre_punto}</Text>
-                <Text style={styles.protocoloName}>
-                  {ip.nombre_protocolo} · Prog. #{im.programacion_id} ({im.nombre_recojo})
-                </Text>
-              </View>
-
-              <View style={styles.metaGrid}>
-                <View style={styles.metaItem}>
-                  <Calendar size={14} color={CasaColors.mutedForeground} />
-                  <Text style={styles.metaText}>{im.fecha_prog_punto}</Text>
+                {/* Cliente / Entidad */}
+                <View style={styles.clientBlock}>
+                  <Text style={styles.clientTitle} numberOfLines={1}>
+                    {prog.nombre_entidad || prog.persona_contacto_prog}
+                  </Text>
+                  {Boolean(prog.nombre_entidad) && (
+                    <Text style={styles.clientContact} numberOfLines={1}>
+                      Contacto: {prog.persona_contacto_prog}
+                    </Text>
+                  )}
                 </View>
-                <View style={styles.metaItem}>
-                  <Clock size={14} color={CasaColors.mutedForeground} />
+
+                {/* Metadatos (Fecha, Horario, Dirección) */}
+                <View style={styles.metaRow}>
+                  <Calendar size={13} color={CasaColors.mutedForeground} />
+                  <Text style={styles.metaText}>{prog.fecha_prog_punto}</Text>
+                  <Clock
+                    size={13}
+                    color={CasaColors.mutedForeground}
+                    style={{ marginLeft: 6 }}
+                  />
                   <Text style={styles.metaText}>
-                    {im.hora_prog_punto}
-                    {im.hora_fin_prog_punto ? ` - ${im.hora_fin_prog_punto}` : ''}
+                    {prog.hora_prog_punto}
+                    {prog.hora_fin_prog_punto ? ` - ${prog.hora_fin_prog_punto}` : ''}
                   </Text>
                 </View>
-              </View>
 
-              <View style={styles.metaRowFull}>
-                <MapPin size={14} color={CasaColors.mutedForeground} />
-                <Text style={styles.metaText} numberOfLines={2}>
-                  {im.direccion_muestreo_prog || 'Sin dirección especificada'}
-                </Text>
-              </View>
-
-              <View style={styles.metaGrid}>
-                <View style={styles.metaItem}>
-                  <User size={14} color={CasaColors.mutedForeground} />
+                <View style={styles.metaRow}>
+                  <MapPin size={13} color={CasaColors.mutedForeground} />
                   <Text style={styles.metaText} numberOfLines={1}>
-                    {im.persona_contacto_prog}
+                    {prog.direccion_muestreo_prog || 'Sin dirección especificada'}
                   </Text>
                 </View>
-                {Boolean(im.celular_contacto_prog) && (
-                  <View style={styles.metaItem}>
-                    <Phone size={14} color={CasaColors.mutedForeground} />
-                    <Text style={styles.metaText}>{im.celular_contacto_prog}</Text>
+
+                {Boolean(prog.celular_contacto_prog) && (
+                  <View style={styles.metaRow}>
+                    <Phone size={13} color={CasaColors.mutedForeground} />
+                    <Text style={styles.metaText}>{prog.celular_contacto_prog}</Text>
                   </View>
                 )}
-              </View>
 
-              {/* Resumen de avance y botones explícitos (Regla 6 de AGENTS.md / design.md) */}
-              <View style={styles.cardFooter}>
-                <View style={styles.statusSummary}>
-                  <EstadoProtocoloBadge completo={punto.protocolo.completo} />
-                  <Badge variant="secondary" size="md">
-                    {numFrascos === 0
-                      ? 'Sin frascos'
-                      : `${numFrascos} ${numFrascos === 1 ? 'frasco' : 'frascos'}`}
-                  </Badge>
+                {/* Barra de despliegue con Chevron */}
+                <View style={styles.accordionToggleRow}>
+                  <Text style={styles.accordionToggleText}>
+                    {prog.totalPuntos === 1
+                      ? '1 punto de muestreo'
+                      : `${prog.totalPuntos} puntos de muestreo`}
+                  </Text>
+                  <View style={styles.chevronWrapper}>
+                    <Text style={styles.chevronLabel}>
+                      {expanded ? 'Ocultar puntos' : 'Ver puntos'}
+                    </Text>
+                    {expanded ? (
+                      <ChevronUp size={16} color={CasaColors.primary} />
+                    ) : (
+                      <ChevronDown size={16} color={CasaColors.primary} />
+                    )}
+                  </View>
                 </View>
+              </TouchableOpacity>
 
-                <View style={styles.actionBtnsRow}>
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    onPress={() =>
-                      router.push({
-                        pathname: '/punto/[puntoId]',
-                        params: {
-                          puntoId: String(im.punto_id),
-                          tab: 'protocolo',
-                        },
-                      })
-                    }
-                    tooltip="Llenar protocolo de campo"
-                  >
-                    <ClipboardList size={15} color={CasaColors.primary} />
-                    Protocolo
-                  </Button>
+              {/* Puntos desplegados */}
+              {expanded && (
+                <View style={styles.puntosListContainer}>
+                  {prog.puntos.map((puntoItem) => {
+                    const { punto, estado_sync } = puntoItem;
+                    const im = punto.info_muestreo;
+                    const ip = punto.info_protocolo;
+                    const numFrascos = punto.muestras.length;
+                    const puntoFinalizado =
+                      Boolean(im.protocolo_verificado) || im.estado_punto === 'entregado';
+                    const protocoloCompleto = punto.protocolo.completo;
+                    const pendienteSync = estado_sync !== 'sincronizado';
 
-                  <Button
-                    variant="default"
-                    size="sm"
-                    onPress={() =>
-                      router.push({
-                        pathname: '/punto/[puntoId]',
-                        params: {
-                          puntoId: String(im.punto_id),
-                          tab: 'muestras',
-                        },
-                      })
-                    }
-                    tooltip="Gestionar muestras y frascos del punto"
-                  >
-                    <FlaskConical size={15} color={CasaColors.primaryForeground} />
-                    Muestras
-                  </Button>
+                    return (
+                      <View key={im.punto_id} style={styles.puntoRowCard}>
+                        <View style={styles.puntoRowHeader}>
+                          <View style={styles.puntoTitleWrapper}>
+                            <Text style={styles.puntoNro}>#{ip.nro_punto}</Text>
+                            <Text style={styles.puntoName} numberOfLines={1}>
+                              {ip.nombre_punto}
+                            </Text>
+                          </View>
+
+                          {puntoFinalizado ? (
+                            <Badge color="green" size="sm">
+                              Aprobado
+                            </Badge>
+                          ) : protocoloCompleto ? (
+                            <Badge color="blue" size="sm">
+                              Completo
+                            </Badge>
+                          ) : (
+                            <Badge variant="outline" size="sm">
+                              Pendiente
+                            </Badge>
+                          )}
+                        </View>
+
+                        <View style={styles.puntoRowMeta}>
+                          <Text style={styles.protocoloSub} numberOfLines={1}>
+                            {ip.nombre_protocolo} ({ip.abreviatura_protocolo})
+                          </Text>
+                          <Text style={styles.frascosSub}>
+                            {numFrascos === 0
+                              ? 'Sin frascos'
+                              : `${numFrascos} ${numFrascos === 1 ? 'frasco' : 'frascos'}`}
+                            {pendienteSync ? ' · Pendiente sync' : ''}
+                          </Text>
+                        </View>
+
+                        {/* Botones directos de Protocolo y Muestras */}
+                        <View style={styles.puntoActionsRow}>
+                          <Button
+                            variant="outline"
+                            size="sm"
+                            style={styles.puntoBtn}
+                            onPress={() =>
+                              router.push({
+                                pathname: '/punto/[puntoId]',
+                                params: {
+                                  puntoId: String(im.punto_id),
+                                  tab: 'protocolo',
+                                },
+                              })
+                            }
+                            tooltip="Llenar o revisar protocolo de campo"
+                          >
+                            <ClipboardList size={14} color={CasaColors.primary} />
+                            Protocolo
+                          </Button>
+
+                          <Button
+                            variant="default"
+                            size="sm"
+                            style={styles.puntoBtn}
+                            onPress={() =>
+                              router.push({
+                                pathname: '/punto/[puntoId]',
+                                params: {
+                                  puntoId: String(im.punto_id),
+                                  tab: 'muestras',
+                                },
+                              })
+                            }
+                            tooltip="Gestionar muestras y frascos del punto"
+                          >
+                            <FlaskConical
+                              size={14}
+                              color={CasaColors.primaryForeground}
+                            />
+                            Muestras
+                          </Button>
+                        </View>
+                      </View>
+                    );
+                  })}
                 </View>
-              </View>
+              )}
             </Card>
           );
         }}
@@ -505,49 +729,64 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     gap: 8,
   },
-  syncToolbar: {
-    flexDirection: 'row',
-    gap: 10,
+  syncContainer: {
+    backgroundColor: CasaColors.card,
     paddingHorizontal: 16,
     paddingVertical: 10,
-    backgroundColor: CasaColors.card,
     borderBottomWidth: 1,
     borderBottomColor: CasaColors.tableDivider,
+    gap: 8,
+  },
+  syncStatusBanner: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    borderRadius: CasaRadius.md,
+    borderWidth: 1,
+  },
+  syncStatusBannerPending: {
+    backgroundColor: '#fef3c7',
+    borderColor: '#fde68a',
+  },
+  syncStatusBannerSynced: {
+    backgroundColor: '#f0fdf4',
+    borderColor: '#bbf7d0',
+  },
+  syncStatusTextPending: {
+    fontSize: 12,
+    fontWeight: '600',
+    color: '#92400e',
+    flexShrink: 1,
+  },
+  syncStatusTextSynced: {
+    fontSize: 12,
+    fontWeight: '600',
+    color: '#15803d',
+    flexShrink: 1,
+  },
+  syncActionRow: {
+    flexDirection: 'row',
+    gap: 10,
   },
   flexBtn: {
     flex: 1,
   },
-  filterSection: {
+  tabsSection: {
     paddingHorizontal: 16,
     paddingTop: 12,
-    paddingBottom: 8,
-    gap: 10,
+    paddingBottom: 4,
   },
-  filterChipsRow: {
-    flexDirection: 'row',
-    gap: 8,
-    flexWrap: 'wrap',
+  tabsList: {
+    backgroundColor: CasaColors.secondary,
   },
-  filterChip: {
-    paddingHorizontal: 12,
-    paddingVertical: 6,
-    borderRadius: CasaRadius.full,
-    backgroundColor: CasaColors.card,
-    borderWidth: 1,
-    borderColor: CasaColors.inputBorder,
+  tabTrigger: {
+    paddingVertical: 8,
   },
-  filterChipActive: {
-    backgroundColor: CasaColors.primary,
-    borderColor: CasaColors.primary,
-  },
-  filterChipText: {
-    fontSize: 12,
-    fontWeight: '600',
-    color: CasaColors.foreground,
-    textTransform: 'capitalize',
-  },
-  filterChipTextActive: {
-    color: CasaColors.primaryForeground,
+  searchSection: {
+    paddingHorizontal: 16,
+    paddingVertical: 8,
   },
   listContent: {
     padding: 16,
@@ -562,80 +801,145 @@ const styles = StyleSheet.create({
     gap: 8,
   },
   emptyTitle: {
-    fontSize: 16,
+    fontSize: 15,
     fontWeight: '700',
     color: CasaColors.primary,
+    textAlign: 'center',
   },
   emptySub: {
-    fontSize: 13,
+    fontSize: 12.5,
     color: CasaColors.mutedForeground,
     textAlign: 'center',
-    lineHeight: 19,
+    lineHeight: 18,
   },
-  puntoCard: {
+  progCard: {
     marginBottom: 4,
-    gap: 10,
+    padding: 0,
+    overflow: 'hidden',
   },
-  cardTopRow: {
+  cardHeaderTouchable: {
+    padding: 14,
+    gap: 8,
+  },
+  headerTopRow: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
-    flexWrap: 'wrap',
     gap: 6,
   },
   badgesLeft: {
     flexDirection: 'row',
     alignItems: 'center',
-    flexWrap: 'wrap',
     gap: 6,
   },
-  titleBlock: {
-    gap: 2,
+  headerRightBadge: {
+    flexDirection: 'row',
+    alignItems: 'center',
   },
-  puntoTitle: {
+  clientBlock: {
+    gap: 2,
+    marginTop: 2,
+  },
+  clientTitle: {
     fontSize: 16,
     fontWeight: '700',
     color: CasaColors.primary,
+    letterSpacing: -0.2,
   },
-  protocoloName: {
-    fontSize: 12.5,
+  clientContact: {
+    fontSize: 12,
     color: CasaColors.mutedForeground,
   },
-  metaGrid: {
-    flexDirection: 'row',
-    flexWrap: 'wrap',
-    gap: 14,
-  },
-  metaItem: {
+  metaRow: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 5,
-  },
-  metaRowFull: {
-    flexDirection: 'row',
-    alignItems: 'flex-start',
     gap: 5,
   },
   metaText: {
-    fontSize: 13,
+    fontSize: 12.5,
     color: CasaColors.foreground,
     flexShrink: 1,
   },
-  cardFooter: {
-    paddingTop: 10,
-    borderTopWidth: 1,
-    borderTopColor: CasaColors.tableDivider,
-    gap: 10,
-  },
-  statusSummary: {
+  accordionToggleRow: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 8,
-    flexWrap: 'wrap',
+    justifyContent: 'space-between',
+    paddingTop: 8,
+    marginTop: 4,
+    borderTopWidth: 1,
+    borderTopColor: CasaColors.tableDivider,
   },
-  actionBtnsRow: {
+  accordionToggleText: {
+    fontSize: 12.5,
+    fontWeight: '600',
+    color: CasaColors.primary,
+  },
+  chevronWrapper: {
     flexDirection: 'row',
-    justifyContent: 'flex-end',
+    alignItems: 'center',
+    gap: 4,
+  },
+  chevronLabel: {
+    fontSize: 12,
+    fontWeight: '600',
+    color: CasaColors.primary,
+  },
+  puntosListContainer: {
+    backgroundColor: '#f8fafc',
+    borderTopWidth: 1,
+    borderTopColor: CasaColors.tableDivider,
+    paddingHorizontal: 12,
+    paddingVertical: 10,
     gap: 8,
+  },
+  puntoRowCard: {
+    backgroundColor: CasaColors.card,
+    borderRadius: CasaRadius.lg,
+    padding: 12,
+    borderWidth: 1,
+    borderColor: CasaColors.inputBorder,
+    gap: 6,
+  },
+  puntoRowHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: 8,
+  },
+  puntoTitleWrapper: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+  },
+  puntoNro: {
+    fontSize: 13,
+    fontWeight: '700',
+    color: CasaColors.primary,
+  },
+  puntoName: {
+    fontSize: 14,
+    fontWeight: '600',
+    color: CasaColors.foreground,
+    flexShrink: 1,
+  },
+  puntoRowMeta: {
+    gap: 2,
+  },
+  protocoloSub: {
+    fontSize: 12,
+    color: CasaColors.mutedForeground,
+  },
+  frascosSub: {
+    fontSize: 11.5,
+    color: CasaColors.mutedForeground,
+  },
+  puntoActionsRow: {
+    flexDirection: 'row',
+    gap: 8,
+    marginTop: 4,
+  },
+  puntoBtn: {
+    flex: 1,
   },
 });
