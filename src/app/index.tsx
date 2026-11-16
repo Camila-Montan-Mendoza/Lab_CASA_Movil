@@ -495,16 +495,29 @@ export default function MuestreosHomeScreen() {
                     Programación {prog.programacion_id}
                   </Text>
 
-                  <Text
-                    style={[
-                      styles.progProgressText,
-                      prog.esFinalizada && styles.progProgressTextFinalizada,
-                    ]}
+                  <Badge
+                    color={
+                      prog.esFinalizada
+                        ? 'green'
+                        : prog.totalPuntos > 0 &&
+                          prog.puntosCompletos === prog.totalPuntos
+                        ? 'green'
+                        : undefined
+                    }
+                    variant={
+                      prog.esFinalizada
+                        ? 'default'
+                        : prog.totalPuntos > 0 &&
+                          prog.puntosCompletos === prog.totalPuntos
+                        ? 'default'
+                        : 'secondary'
+                    }
+                    size="md"
                   >
                     {prog.esFinalizada
                       ? 'Completada'
                       : `${prog.puntosCompletos}/${prog.totalPuntos} listos`}
-                  </Text>
+                  </Badge>
                 </View>
 
                 {/* Metadatos con iconos */}
@@ -806,14 +819,6 @@ const styles = StyleSheet.create({
     fontWeight: '700',
     color: CasaColors.primary,
     letterSpacing: -0.2,
-  },
-  progProgressText: {
-    fontSize: 13,
-    fontWeight: '600',
-    color: CasaColors.mutedForeground,
-  },
-  progProgressTextFinalizada: {
-    color: '#15803d',
   },
   metaRow: {
     flexDirection: 'row',
