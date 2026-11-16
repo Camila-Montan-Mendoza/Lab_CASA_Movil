@@ -11,9 +11,7 @@ import {
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Redirect, useFocusEffect, useRouter } from 'expo-router';
 import {
-  AlertCircle,
   Calendar,
-  CheckCircle2,
   ChevronDown,
   ChevronUp,
   ClipboardList,
@@ -25,6 +23,7 @@ import {
   MapPin,
   Phone,
   Search,
+  User,
   Wifi,
   WifiOff,
 } from 'lucide-react-native';
@@ -41,11 +40,6 @@ import { Button } from '@/design-system/ui/button/button';
 import { Badge } from '@/design-system/ui/badge/badge';
 import { Card } from '@/design-system/ui/card/card';
 import { Input } from '@/design-system/ui/input/input';
-import {
-  Tabs,
-  TabsList,
-  TabsTrigger,
-} from '@/design-system/ui/tabs/tabs';
 import { CasaColors, CasaRadius } from '@/design-system/tokens';
 
 export interface ProgramacionAgrupada {
@@ -69,9 +63,8 @@ export interface ProgramacionAgrupada {
 
 /**
  * Agenda de Muestreo del Muestreador (C.A.S.A. Móvil).
- * Agrupa los puntos por Programación en cards colapsables tipo acordeón,
- * con solo dos pestañas (Asignados y Finalizados), y una barra de sincronización
- * offline clara e intuitiva.
+ * Muestra cada programación en un card limpio con título "Programación N",
+ * avance a la derecha, datos con iconos alineados y lista desplegable de puntos.
  */
 export default function MuestreosHomeScreen() {
   const router = useRouter();
@@ -84,12 +77,11 @@ export default function MuestreosHomeScreen() {
   const [sincronizando, setSincronizando] = useState(false);
   const [expandedIds, setExpandedIds] = useState<Record<number, boolean>>({});
 
+  const userSub = user?.sub;
   const puedeVerTodos = useMemo(
     () => user?.permisos?.includes('programacion.ver-todos') ?? false,
     [user?.permisos]
   );
-
-  const userSub = user?.sub;
 
   const cargarDesdeSqlite = useCallback(() => {
     if (!userSub) return;
@@ -294,6 +286,7 @@ export default function MuestreosHomeScreen() {
         prog.direccion_muestreo_prog,
         prog.tipo_analisis_prog,
         prog.nombre_recojo,
+        `programacion ${prog.programacion_id}`,
         `prog #${prog.programacion_id}`,
         `#${prog.programacion_id}`,
         ...prog.puntos.flatMap((p) => [
@@ -315,7 +308,6 @@ export default function MuestreosHomeScreen() {
       if (expandedIds[id] !== undefined) {
         return expandedIds[id];
       }
-      // Por defecto expande si hay 2 o menos programaciones, o la primera de la lista
       return index === 0 || total <= 2;
     },
     [expandedIds]
@@ -369,96 +361,88 @@ export default function MuestreosHomeScreen() {
         </View>
       </View>
 
-      {/* Barra de sincronización y estado offline */}
-      <View style={styles.syncContainer}>
-        <View
-          style={[
-            styles.syncStatusBanner,
-            pendientesSync > 0
-              ? styles.syncStatusBannerPending
-              : styles.syncStatusBannerSynced,
-          ]}
+      {/* Barra de sincronización y descarga offline */}
+      <View style={styles.syncToolbar}>
+        <Button
+          variant="outline"
+          size="sm"
+          loading={descargando}
+          onPress={() => descargarDelServidor(false)}
+          style={styles.flexBtn}
+          tooltip="Actualizar agenda con los muestreos asignados desde el servidor"
         >
-          {pendientesSync > 0 ? (
-            <>
-              <AlertCircle size={15} color="#b45309" />
-              <Text style={styles.syncStatusTextPending}>
-                Hay {pendientesSync} {pendientesSync === 1 ? 'punto listo' : 'puntos listos'} para enviar.
-              </Text>
-            </>
-          ) : (
-            <>
-              <CheckCircle2 size={15} color="#15803d" />
-              <Text style={styles.syncStatusTextSynced}>
-                Todo sincronizado · Listo para trabajar sin conexión
-              </Text>
-            </>
-          )}
-        </View>
+          <CloudDownload size={16} color={CasaColors.primary} />
+          Actualizar agenda
+        </Button>
 
-        <View style={styles.syncActionRow}>
-          <Button
-            variant="outline"
-            size="sm"
-            loading={descargando}
-            onPress={() => descargarDelServidor(false)}
-            style={styles.flexBtn}
-            tooltip="Actualizar agenda con los muestreos asignados desde el servidor"
-          >
-            <CloudDownload size={16} color={CasaColors.primary} />
-            Actualizar agenda
-          </Button>
-
-          <Button
-            variant={pendientesSync > 0 ? 'default' : 'secondary'}
-            size="sm"
-            disabled={pendientesSync === 0}
-            loading={sincronizando}
-            onPress={handleSincronizar}
-            style={styles.flexBtn}
-            tooltip="Subir protocolos, muestras y fotografías al servidor para auditoría"
-          >
-            <CloudUpload
-              size={16}
-              color={
-                pendientesSync > 0
-                  ? CasaColors.primaryForeground
-                  : CasaColors.secondaryForeground
-              }
-            />
-            {pendientesSync > 0
-              ? `Subir cambios (${pendientesSync})`
-              : 'Subir cambios'}
-          </Button>
-        </View>
+        <Button
+          variant={pendientesSync > 0 ? 'default' : 'secondary'}
+          size="sm"
+          disabled={pendientesSync === 0}
+          loading={sincronizando}
+          onPress={handleSincronizar}
+          style={styles.flexBtn}
+          tooltip="Subir protocolos, muestras y fotografías al servidor para auditoría"
+        >
+          <CloudUpload
+            size={16}
+            color={
+              pendientesSync > 0
+                ? CasaColors.primaryForeground
+                : CasaColors.secondaryForeground
+            }
+          />
+          {pendientesSync > 0
+            ? `Subir cambios (${pendientesSync})`
+            : 'Subir cambios'}
+        </Button>
       </View>
 
-      {/* Pestañas: Asignados y Finalizados */}
-      <View style={styles.tabsSection}>
-        <Tabs
-          value={tabActiva}
-          onValueChange={(val) => setTabActiva(val as 'asignados' | 'finalizados')}
-        >
-          <TabsList style={styles.tabsList}>
-            <TabsTrigger value="asignados" style={styles.tabTrigger}>
-              Asignados ({conteoAsignados})
-            </TabsTrigger>
-            <TabsTrigger value="finalizados" style={styles.tabTrigger}>
-              Finalizados ({conteoFinalizados})
-            </TabsTrigger>
-          </TabsList>
-        </Tabs>
-      </View>
-
-      {/* Buscador */}
-      <View style={styles.searchSection}>
+      {/* Buscador y filtros Asignados / Finalizados */}
+      <View style={styles.filterSection}>
         <Input
           size="sm"
           value={query}
           onChangeText={setQuery}
-          placeholder="Buscar por cliente, dirección o protocolo…"
+          placeholder="Buscar por contacto, dirección o protocolo…"
           startIcon={<Search size={16} color={CasaColors.mutedForeground} />}
         />
+
+        <View style={styles.filterChipsRow}>
+          <TouchableOpacity
+            onPress={() => setTabActiva('asignados')}
+            style={[
+              styles.filterChip,
+              tabActiva === 'asignados' && styles.filterChipActive,
+            ]}
+          >
+            <Text
+              style={[
+                styles.filterChipText,
+                tabActiva === 'asignados' && styles.filterChipTextActive,
+              ]}
+            >
+              Asignados ({conteoAsignados})
+            </Text>
+          </TouchableOpacity>
+
+          <TouchableOpacity
+            onPress={() => setTabActiva('finalizados')}
+            style={[
+              styles.filterChip,
+              tabActiva === 'finalizados' && styles.filterChipActive,
+            ]}
+          >
+            <Text
+              style={[
+                styles.filterChipText,
+                tabActiva === 'finalizados' && styles.filterChipTextActive,
+              ]}
+            >
+              Finalizados ({conteoFinalizados})
+            </Text>
+          </TouchableOpacity>
+        </View>
       </View>
 
       {/* Lista de Programaciones (Cards desplegables) */}
@@ -504,44 +488,35 @@ export default function MuestreosHomeScreen() {
                 onPress={() => toggleProg(prog.programacion_id, expanded)}
                 style={styles.cardHeaderTouchable}
               >
-                <View style={styles.headerTopRow}>
-                  <View style={styles.badgesLeft}>
-                    <Badge color="navy" size="md">
-                      {`Prog. #${prog.programacion_id}`}
-                    </Badge>
-                    {prog.tienePendientesSync && (
-                      <Badge color="yellow" size="md">
-                        Cambios locales
-                      </Badge>
-                    )}
-                  </View>
-
-                  <View style={styles.headerRightBadge}>
-                    {prog.esFinalizada ? (
-                      <Badge color="green" size="md">
-                        Completada
-                      </Badge>
-                    ) : (
-                      <Badge variant="secondary" size="md">
-                        {`${prog.puntosCompletos}/${prog.totalPuntos} listos`}
-                      </Badge>
-                    )}
-                  </View>
-                </View>
-
-                {/* Cliente / Entidad */}
-                <View style={styles.clientBlock}>
-                  <Text style={styles.clientTitle} numberOfLines={1}>
-                    {prog.nombre_entidad || prog.persona_contacto_prog}
+                {/* Título: "Programación N" a la izquierda, avance a la derecha */}
+                <View style={styles.cardTopRow}>
+                  <Text style={styles.progTitle}>
+                    Programación {prog.programacion_id}
                   </Text>
-                  {Boolean(prog.nombre_entidad) && (
-                    <Text style={styles.clientContact} numberOfLines={1}>
-                      Contacto: {prog.persona_contacto_prog}
-                    </Text>
-                  )}
+
+                  <Text
+                    style={[
+                      styles.progProgressText,
+                      prog.esFinalizada && styles.progProgressTextFinalizada,
+                    ]}
+                  >
+                    {prog.esFinalizada
+                      ? 'Completada'
+                      : `${prog.puntosCompletos}/${prog.totalPuntos} listos`}
+                  </Text>
                 </View>
 
-                {/* Metadatos (Fecha, Horario, Dirección) */}
+                {/* Metadatos con iconos */}
+                {/* Contacto (con icono de persona) */}
+                <View style={styles.metaRow}>
+                  <User size={13} color={CasaColors.mutedForeground} />
+                  <Text style={styles.metaText} numberOfLines={1}>
+                    {prog.persona_contacto_prog}
+                    {prog.nombre_entidad ? ` (${prog.nombre_entidad})` : ''}
+                  </Text>
+                </View>
+
+                {/* Fecha y Horario */}
                 <View style={styles.metaRow}>
                   <Calendar size={13} color={CasaColors.mutedForeground} />
                   <Text style={styles.metaText}>{prog.fecha_prog_punto}</Text>
@@ -556,6 +531,7 @@ export default function MuestreosHomeScreen() {
                   </Text>
                 </View>
 
+                {/* Dirección */}
                 <View style={styles.metaRow}>
                   <MapPin size={13} color={CasaColors.mutedForeground} />
                   <Text style={styles.metaText} numberOfLines={1}>
@@ -563,6 +539,7 @@ export default function MuestreosHomeScreen() {
                   </Text>
                 </View>
 
+                {/* Celular */}
                 {Boolean(prog.celular_contacto_prog) && (
                   <View style={styles.metaRow}>
                     <Phone size={13} color={CasaColors.mutedForeground} />
@@ -729,64 +706,50 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     gap: 8,
   },
-  syncContainer: {
-    backgroundColor: CasaColors.card,
-    paddingHorizontal: 16,
-    paddingVertical: 10,
-    borderBottomWidth: 1,
-    borderBottomColor: CasaColors.tableDivider,
-    gap: 8,
-  },
-  syncStatusBanner: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 6,
-    paddingHorizontal: 10,
-    paddingVertical: 6,
-    borderRadius: CasaRadius.md,
-    borderWidth: 1,
-  },
-  syncStatusBannerPending: {
-    backgroundColor: '#fef3c7',
-    borderColor: '#fde68a',
-  },
-  syncStatusBannerSynced: {
-    backgroundColor: '#f0fdf4',
-    borderColor: '#bbf7d0',
-  },
-  syncStatusTextPending: {
-    fontSize: 12,
-    fontWeight: '600',
-    color: '#92400e',
-    flexShrink: 1,
-  },
-  syncStatusTextSynced: {
-    fontSize: 12,
-    fontWeight: '600',
-    color: '#15803d',
-    flexShrink: 1,
-  },
-  syncActionRow: {
+  syncToolbar: {
     flexDirection: 'row',
     gap: 10,
+    paddingHorizontal: 16,
+    paddingVertical: 10,
+    backgroundColor: CasaColors.card,
+    borderBottomWidth: 1,
+    borderBottomColor: CasaColors.tableDivider,
   },
   flexBtn: {
     flex: 1,
   },
-  tabsSection: {
+  filterSection: {
     paddingHorizontal: 16,
-    paddingTop: 12,
-    paddingBottom: 4,
+    paddingTop: 10,
+    paddingBottom: 6,
+    gap: 8,
   },
-  tabsList: {
-    backgroundColor: CasaColors.secondary,
+  filterChipsRow: {
+    flexDirection: 'row',
+    gap: 8,
   },
-  tabTrigger: {
-    paddingVertical: 8,
+  filterChip: {
+    flex: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingVertical: 7,
+    paddingHorizontal: 12,
+    borderRadius: CasaRadius.full,
+    backgroundColor: CasaColors.card,
+    borderWidth: 1,
+    borderColor: CasaColors.inputBorder,
   },
-  searchSection: {
-    paddingHorizontal: 16,
-    paddingVertical: 8,
+  filterChipActive: {
+    backgroundColor: CasaColors.primary,
+    borderColor: CasaColors.primary,
+  },
+  filterChipText: {
+    fontSize: 12.5,
+    fontWeight: '600',
+    color: CasaColors.foreground,
+  },
+  filterChipTextActive: {
+    color: CasaColors.primaryForeground,
   },
   listContent: {
     padding: 16,
@@ -821,39 +784,30 @@ const styles = StyleSheet.create({
     padding: 14,
     gap: 8,
   },
-  headerTopRow: {
+  cardTopRow: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
-    gap: 6,
+    gap: 8,
   },
-  badgesLeft: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 6,
-  },
-  headerRightBadge: {
-    flexDirection: 'row',
-    alignItems: 'center',
-  },
-  clientBlock: {
-    gap: 2,
-    marginTop: 2,
-  },
-  clientTitle: {
+  progTitle: {
     fontSize: 16,
     fontWeight: '700',
     color: CasaColors.primary,
     letterSpacing: -0.2,
   },
-  clientContact: {
-    fontSize: 12,
+  progProgressText: {
+    fontSize: 13,
+    fontWeight: '600',
     color: CasaColors.mutedForeground,
+  },
+  progProgressTextFinalizada: {
+    color: '#15803d',
   },
   metaRow: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 5,
+    gap: 6,
   },
   metaText: {
     fontSize: 12.5,
