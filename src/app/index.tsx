@@ -701,6 +701,7 @@ const styles = StyleSheet.create({
   safeArea: {
     flex: 1,
     backgroundColor: CasaColors.background,
+    marginHorizontal: 4,
   },
   topHeader: {
     backgroundColor: CasaColors.authBg,
@@ -836,8 +837,8 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
-    paddingTop: 5,
-    marginTop: 2,
+    paddingTop: 9,
+    marginTop: 6,
     borderTopWidth: 1,
     borderTopColor: CasaColors.tableDivider,
   },
@@ -861,8 +862,8 @@ const styles = StyleSheet.create({
     borderTopWidth: 1,
     borderTopColor: CasaColors.tableDivider,
     paddingHorizontal: 8,
-    paddingVertical: 6,
-    gap: 5,
+    paddingVertical: 10,
+    gap: 10,
   },
   puntoRowCard: {
     backgroundColor: CasaColors.card,
