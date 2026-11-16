@@ -12,6 +12,7 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { Redirect, useFocusEffect, useRouter } from 'expo-router';
 import {
   Calendar,
+  Car,
   ChevronDown,
   ChevronUp,
   ClipboardList,
@@ -538,6 +539,16 @@ export default function MuestreosHomeScreen() {
                     {prog.direccion_muestreo_prog || 'Sin dirección especificada'}
                   </Text>
                 </View>
+
+                {/* Tipo de recojo / traslado */}
+                {Boolean(prog.nombre_recojo) && (
+                  <View style={styles.metaRow}>
+                    <Car size={13} color={CasaColors.mutedForeground} />
+                    <Text style={styles.metaText} numberOfLines={1}>
+                      Recojo: {prog.nombre_recojo}
+                    </Text>
+                  </View>
+                )}
 
                 {/* Celular */}
                 {Boolean(prog.celular_contacto_prog) && (
