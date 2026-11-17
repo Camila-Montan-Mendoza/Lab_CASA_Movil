@@ -218,22 +218,22 @@ export function MuestrasForm({ punto, onActualizado }: Props) {
 
         {/* Lista de frascos con borde de tabla estandarizado */}
         <Card>
-          <CardHeader style={styles.rowBetween}>
-            <View style={styles.flex1}>
+          <CardHeader>
+            <View style={styles.frascosTitleRow}>
               <CardTitle>Frascos ({frascos.length})</CardTitle>
-              <CardDescription>
-                Al agregar o editar un frasco se guarda automáticamente en el dispositivo.
-              </CardDescription>
+              <Button
+                variant="default"
+                size="sm"
+                onPress={abrirNuevo}
+                tooltip="Agregar un nuevo frasco a este punto"
+              >
+                <Plus size={15} color={CasaColors.primaryForeground} />
+                Agregar frasco
+              </Button>
             </View>
-            <Button
-              variant="default"
-              size="sm"
-              onPress={abrirNuevo}
-              tooltip="Agregar un nuevo frasco a este punto"
-            >
-              <Plus size={15} color={CasaColors.primaryForeground} />
-              Agregar frasco
-            </Button>
+            <CardDescription>
+              Al agregar o editar un frasco se guarda automáticamente en el dispositivo.
+            </CardDescription>
           </CardHeader>
 
           <CardContent>
@@ -242,9 +242,6 @@ export function MuestrasForm({ punto, onActualizado }: Props) {
                 <FlaskConical size={28} color={CasaColors.mutedForeground} />
                 <Text style={styles.emptyTitle}>
                   Todavía no cargaste ningún frasco.
-                </Text>
-                <Text style={styles.mutedText}>
-                  Pulsa «Agregar frasco» para repartir los ensayos del punto.
                 </Text>
               </View>
             ) : (
@@ -384,6 +381,12 @@ const styles = StyleSheet.create({
   },
   flex1: {
     flex: 1,
+  },
+  frascosTitleRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: 10,
   },
   chipsWrap: {
     flexDirection: 'row',

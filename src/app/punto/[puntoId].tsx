@@ -3,6 +3,9 @@ import {
   View,
   Text,
   StyleSheet,
+  Keyboard,
+  KeyboardAvoidingView,
+  Platform,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useLocalSearchParams, useRouter } from 'expo-router';
@@ -40,6 +43,24 @@ export default function PuntoDetalleScreen() {
     params.tab === 'muestras' ? 'muestras' : 'protocolo'
   );
 
+  // Con el teclado abierto este cubre la barra de navegación del sistema, así que
+  // solo se reserva el margen inferior (botones de atrás/inicio) cuando está oculto.
+  const [tecladoVisible, setTecladoVisible] = useState(false);
+  useEffect(() => {
+    const show = Keyboard.addListener(
+      Platform.OS === 'ios' ? 'keyboardWillShow' : 'keyboardDidShow',
+      () => setTecladoVisible(true)
+    );
+    const hide = Keyboard.addListener(
+      Platform.OS === 'ios' ? 'keyboardWillHide' : 'keyboardDidHide',
+      () => setTecladoVisible(false)
+    );
+    return () => {
+      show.remove();
+      hide.remove();
+    };
+  }, []);
+
   const cargar = useCallback(() => {
     if (!Number.isFinite(puntoId)) return;
     const row = obtenerPuntoOffline(puntoId);
@@ -75,7 +96,11 @@ export default function PuntoDetalleScreen() {
   }
 
   return (
-    <SafeAreaView style={styles.safeArea} edges={['top']}>
+    <SafeAreaView
+      style={styles.safeArea}
+      edges={tecladoVisible ? ['top'] : ['top', 'bottom']}
+    >
+      <KeyboardAvoidingView style={styles.flex} behavior="padding">
       {/* Cabecera del punto estandarizada con --sidebar (#001B47) */}
       <View style={styles.topBar}>
         <Button
@@ -161,11 +186,15 @@ export default function PuntoDetalleScreen() {
           />
         </TabsContent>
       </Tabs>
+      </KeyboardAvoidingView>
     </SafeAreaView>
   );
 }
 
 const styles = StyleSheet.create({
+  flex: {
+    flex: 1,
+  },
   safeArea: {
     flex: 1,
     backgroundColor: CasaColors.background,
